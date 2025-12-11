@@ -1,0 +1,90 @@
+# ==============================================================================
+# ConflictGuard - Docker Compose Configuration
+# ==============================================================================
+# USAGE:
+#   OPENROUTER_API_KEY=your-key NEO4J_PASSWORD=your-password docker-compose up -d
+#
+# SECURITY NOTICE:
+#   All credentials MUST be provided via environment variables.
+#   Never hardcode credentials in this file.
+# ==============================================================================
+
+services:
+  # Neo4j Graph Database
+  neo4j:
+    image: neo4j:5-community
+    container_name: conflictguard-neo4j
+    ports:
+      - "7474:7474"  # HTTP Browser
+      - "7687:7687"  # Bolt Protocol
+    environment:
+      # SECURITY: Password MUST be provided via environment variable
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD environment variable is required}
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - conflictguard-network
+
+  # Spring Boot Backend
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: conflictguard-backend
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_NEO4J_URI=bolt://neo4j:7687
+      - SPRING_NEO4J_AUTHENTICATION_USERNAME=neo4j
+      - SPRING_NEO4J_AUTHENTICATION_PASSWORD=${NEO4J_PASSWORD:?NEO4J_PASSWORD environment variable is required}
+      # SECURITY: API key MUST be provided via environment variable
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:?OPENROUTER_API_KEY environment variable is required}
+      - FRONTEND_URL=http://localhost:3000
+      # Development settings (override for production)
+      - GRAPHIQL_ENABLED=${GRAPHIQL_ENABLED:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - HEALTH_DETAILS=always
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    networks:
+      - conflictguard-network
+
+  # Next.js Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: conflictguard-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_GRAPHQL_URL=http://localhost:8080/graphql
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - conflictguard-network
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+
+networks:
+  conflictguard-network:
+    driver: bridge

@@ -1,0 +1,31 @@
+# Test Configuration for ConflictGuard
+# This configuration is used by Spring Boot tests
+
+spring:
+  # Neo4j test settings (overridden by Testcontainers in integration tests)
+  neo4j:
+    uri: bolt://localhost:7687
+    authentication:
+      username: neo4j
+      password: testpassword
+
+  # GraphQL settings
+  graphql:
+    graphiql:
+      enabled: false
+
+# OpenRouter API settings for tests (should be mocked in most tests)
+openrouter:
+  api:
+    key: test-api-key
+    url: https://openrouter.ai/api/v1/chat/completions
+    model: deepseek/deepseek-r1
+    temperature: 0.3
+    max-tokens: 4096
+
+# Logging configuration for tests
+logging:
+  level:
+    com.conflictguard: DEBUG
+    org.springframework.graphql: DEBUG
+    org.neo4j: WARN

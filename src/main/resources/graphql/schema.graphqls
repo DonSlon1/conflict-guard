@@ -1,0 +1,96 @@
+type Document {
+    id: ID!
+    name: String!
+    content: String!
+    documentType: DocumentType!
+    entities: [Entity!]!
+    createdAt: String!
+}
+
+type Entity {
+    id: ID!
+    name: String!
+    entityType: EntityType!
+    value: String
+    sourceContext: String
+    sourceDocument: Document
+    relatedEntities: [EntityRelation!]!
+    conflicts: [Conflict!]!
+}
+
+type EntityRelation {
+    entity: Entity!
+    relationshipType: RelationshipType!
+}
+
+type Conflict {
+    id: ID!
+    description: String!
+    severity: ConflictSeverity!
+    reasoning: String!
+    entities: [Entity!]!
+    legalPrinciple: String
+}
+
+enum DocumentType {
+    CONTRACT
+    TERMS_AND_CONDITIONS
+    INTERNAL_DIRECTIVE
+    REGULATION
+    OTHER
+}
+
+enum EntityType {
+    TIME_PERIOD
+    MONETARY_VALUE
+    PARTY
+    OBLIGATION
+    RIGHT
+    CONDITION
+    PENALTY
+    CLAUSE
+}
+
+enum RelationshipType {
+    DEFINES
+    REFERENCES
+    OVERRIDES
+    CONFLICTS_WITH
+    DEPENDS_ON
+}
+
+enum ConflictSeverity {
+    LOW
+    MEDIUM
+    HIGH
+    CRITICAL
+}
+
+type ConflictAnalysisResult {
+    conflicts: [Conflict!]!
+    summary: String!
+    analyzedAt: String!
+}
+
+# Queries - Read-only operations
+type Query {
+    documents: [Document!]!
+    document(id: ID!): Document
+    entities(type: EntityType): [Entity!]!
+    entity(id: ID!): Entity
+    conflicts(severity: ConflictSeverity): [Conflict!]!
+    conflictsForDocuments(documentIds: [ID!]!): [Conflict!]!
+}
+
+# Mutations - Operations with side effects
+type Mutation {
+    ingestDocument(input: DocumentInput!): Document!
+    deleteDocument(id: ID!): Boolean!
+    analyzeConflicts(documentIds: [ID!]!): ConflictAnalysisResult!
+}
+
+input DocumentInput {
+    name: String!
+    content: String!
+    documentType: DocumentType!
+}

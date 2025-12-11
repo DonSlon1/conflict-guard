@@ -1,0 +1,75 @@
+# ==============================================================================
+# ConflictGuard - Spring Boot Configuration
+# ==============================================================================
+# SECURITY NOTICE: All credentials MUST be provided via environment variables.
+# Never commit actual credentials to version control.
+# ==============================================================================
+
+spring:
+  application:
+    name: conflict-guard
+
+  graphql:
+    graphiql:
+      enabled: ${GRAPHIQL_ENABLED:true}  # Disable in production
+    path: /graphql
+    schema:
+      printer:
+        enabled: ${SCHEMA_PRINTER_ENABLED:false}  # Disable in production
+    cors:
+      # SECURITY: Restrict to known origins in production
+      allowed-origins:
+        - "http://localhost:3000"
+        - "http://127.0.0.1:3000"
+        - "${FRONTEND_URL:http://localhost:3000}"
+      allowed-methods:
+        - GET
+        - POST
+        - OPTIONS
+      allowed-headers:
+        - Content-Type
+        - Authorization
+        - Apollo-Require-Preflight
+
+  neo4j:
+    uri: ${SPRING_NEO4J_URI:bolt://localhost:7687}
+    authentication:
+      username: ${SPRING_NEO4J_AUTHENTICATION_USERNAME:neo4j}
+      # SECURITY: No default password - MUST be provided via environment variable
+      password: ${SPRING_NEO4J_AUTHENTICATION_PASSWORD:}
+
+  ai:
+    openai:
+      # SECURITY: No default key - MUST be provided via environment variable
+      api-key: ${OPENROUTER_API_KEY:}
+      base-url: https://openrouter.ai/api/v1
+      chat:
+        options:
+          model: ${OPENROUTER_MODEL:tngtech/deepseek-r1t2-chimera:free}
+          temperature: 0.2
+
+# Custom OpenRouter config
+openrouter:
+  # SECURITY: No default key - MUST be provided via environment variable
+  api-key: ${OPENROUTER_API_KEY:}
+  model: ${OPENROUTER_MODEL:tngtech/deepseek-r1t2-chimera:free}
+
+server:
+  port: ${SERVER_PORT:8080}
+
+# Actuator for health checks
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: ${HEALTH_DETAILS:when_authorized}  # Use 'always' only in dev
+
+logging:
+  level:
+    com.conflictguard: ${LOG_LEVEL:INFO}
+    org.springframework.graphql: ${LOG_LEVEL:INFO}
+    org.springframework.ai: ${LOG_LEVEL:INFO}
+    org.springframework.web.client: ${LOG_LEVEL:INFO}

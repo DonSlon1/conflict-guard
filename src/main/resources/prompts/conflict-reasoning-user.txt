@@ -1,0 +1,9 @@
+Analyze the following entities extracted from multiple documents for potential conflicts.
+
+--- ENTITIES FROM DOCUMENTS ---
+{entities}
+--- END OF ENTITIES ---
+
+Apply legal reasoning principles to identify conflicts, contradictions, or risks.
+For each conflict found, explain the legal reasoning and which principle applies.
+Respond with the JSON structure.

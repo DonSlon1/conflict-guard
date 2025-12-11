@@ -1,0 +1,10 @@
+Analyze the following document and extract all relevant entities and relationships.
+
+Document Type: {documentType}
+Document Name: {documentName}
+
+--- DOCUMENT CONTENT ---
+{content}
+--- END OF DOCUMENT ---
+
+Extract all entities with their relationships and respond with the JSON structure.

@@ -1,0 +1,131 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.2.5'
+    id 'io.spring.dependency-management' version '1.1.4'
+    id 'jacoco'
+}
+
+group = 'com.conflictguard'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    sourceCompatibility = '21'
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Spring Boot Core
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    // GraphQL
+    implementation 'org.springframework.boot:spring-boot-starter-graphql'
+
+    // Neo4j
+    implementation 'org.springframework.boot:spring-boot-starter-data-neo4j'
+
+    // JSON Processing
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+
+    // Lombok
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    // Testing
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.graphql:spring-graphql-test'
+    testImplementation 'org.testcontainers:neo4j:1.19.7'
+    testImplementation 'org.testcontainers:junit-jupiter:1.19.7'
+    testImplementation 'org.mockito:mockito-core'
+    testImplementation 'org.assertj:assertj-core'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// Unit tests only (no Docker/Testcontainers required)
+tasks.register('unitTest', Test) {
+    useJUnitPlatform()
+    exclude '**/integration/**'
+    exclude '**/e2e/**'
+    exclude '**/*IntegrationTest*'
+    exclude '**/*E2ETest*'
+}
+
+// Integration tests (require Docker)
+tasks.register('integrationTest', Test) {
+    useJUnitPlatform()
+    include '**/integration/**'
+    include '**/e2e/**'
+    include '**/*IntegrationTest*'
+    include '**/*E2ETest*'
+}
+
+// JaCoCo Coverage Configuration
+jacoco {
+    toolVersion = "0.8.11"
+}
+
+tasks.named('unitTest') {
+    finalizedBy 'jacocoUnitTestReport'
+}
+
+// Coverage report for unit tests only
+tasks.register('jacocoUnitTestReport', JacocoReport) {
+    dependsOn unitTest
+    executionData unitTest
+    sourceSets sourceSets.main
+
+    reports {
+        xml.required = true
+        html.required = true
+        csv.required = false
+        html.outputLocation = layout.buildDirectory.dir('reports/jacoco/unitTest/html')
+        xml.outputLocation = layout.buildDirectory.file('reports/jacoco/unitTest/jacocoUnitTestReport.xml')
+    }
+
+    classDirectories.setFrom(files(sourceSets.main.output.classesDirs.files.collect {
+        fileTree(dir: it, exclude: [
+            '**/domain/**',      // Exclude domain/entity classes (mostly getters/setters)
+            '**/dto/**',         // Exclude DTOs
+            '**/config/**',      // Exclude configuration
+            '**/*Application*'   // Exclude main application class
+        ])
+    }))
+
+    doLast {
+        def report = layout.buildDirectory.file('reports/jacoco/unitTest/jacocoUnitTestReport.xml').get().asFile
+        if (report.exists()) {
+            def parser = new XmlSlurper()
+            parser.setFeature("http://apache.org/xml/features/disallow-doctype-decl", false)
+            parser.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+            def xml = parser.parse(report)
+
+            def covered = xml.counter.find { it.@type == 'LINE' }?.@covered?.toInteger() ?: 0
+            def missed = xml.counter.find { it.@type == 'LINE' }?.@missed?.toInteger() ?: 0
+            def total = covered + missed
+            def percentage = total > 0 ? (covered * 100.0 / total) : 0
+
+            println "\n=========================================="
+            println "       CODE COVERAGE SUMMARY"
+            println "=========================================="
+            println "  Lines covered: ${covered}"
+            println "  Lines missed:  ${missed}"
+            println "  Total lines:   ${total}"
+            println "  Coverage:      ${String.format('%.2f', percentage)}%"
+            println "==========================================\n"
+            println "HTML report: build/reports/jacoco/unitTest/html/index.html"
+        }
+    }
+}
