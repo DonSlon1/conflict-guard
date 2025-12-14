@@ -73,3 +73,68 @@ logging:
     org.springframework.graphql: ${LOG_LEVEL:INFO}
     org.springframework.ai: ${LOG_LEVEL:INFO}
     org.springframework.web.client: ${LOG_LEVEL:INFO}
+    io.github.resilience4j: ${LOG_LEVEL:INFO}
+
+# ==============================================================================
+# Resilience4j Configuration - Circuit Breaker & Rate Limiting
+# ==============================================================================
+resilience4j:
+  # Circuit Breaker: Prevents cascade failures when OpenRouter API is down
+  circuitbreaker:
+    instances:
+      openrouter:
+        # Wait 30 seconds before attempting to call OpenRouter again after circuit opens
+        waitDurationInOpenState: 30s
+        # Allow 3 test calls when circuit is half-open
+        permittedNumberOfCallsInHalfOpenState: 3
+        # Track the last 10 calls for failure rate calculation
+        slidingWindowSize: 10
+        # Open circuit if 50% of calls fail
+        failureRateThreshold: 50
+        # Also open circuit if calls are too slow (> 60 seconds)
+        slowCallRateThreshold: 80
+        slowCallDurationThreshold: 60s
+        # Record these exceptions as failures
+        recordExceptions:
+          - com.conflictguard.ai.OpenRouterClient$OpenRouterException
+          - org.springframework.web.client.RestClientException
+          - java.io.IOException
+
+  # Rate Limiter: Prevents API cost explosions and DoS attacks
+  ratelimiter:
+    instances:
+      # Document ingestion: 10 requests per minute (triggers AI extraction)
+      documentIngestion:
+        limitForPeriod: 10
+        limitRefreshPeriod: 1m
+        timeoutDuration: 0s  # Fail immediately if rate limit exceeded
+      # Conflict analysis: 5 requests per minute (expensive reasoning operation)
+      conflictAnalysis:
+        limitForPeriod: 5
+        limitRefreshPeriod: 1m
+        timeoutDuration: 0s
+      # Document deletion: 30 requests per minute (cheap operation)
+      documentDeletion:
+        limitForPeriod: 30
+        limitRefreshPeriod: 1m
+        timeoutDuration: 0s
+      # Conflict deletion: 30 requests per minute (cheap operation)
+      conflictDeletion:
+        limitForPeriod: 30
+        limitRefreshPeriod: 1m
+        timeoutDuration: 0s
+
+  # Retry: Automatic retry for transient failures
+  retry:
+    instances:
+      openrouter:
+        maxAttempts: 3
+        waitDuration: 2s
+        # Exponential backoff: 2s, 4s, 8s
+        enableExponentialBackoff: true
+        exponentialBackoffMultiplier: 2
+        retryExceptions:
+          - org.springframework.web.client.RestClientException
+          - java.io.IOException
+        ignoreExceptions:
+          - com.conflictguard.ai.OpenRouterClient$OpenRouterException

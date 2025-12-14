@@ -466,13 +466,110 @@ open build/reports/jacoco/jacocoUnitTestReport/html/index.html
 | `LOG_LEVEL` | Logging verbosity | No | `INFO` |
 | `GRAPHIQL_ENABLED` | Enable GraphiQL UI | No | `true` |
 
-### Security Recommendations (Production)
+---
 
-1. **Disable GraphiQL**: Set `GRAPHIQL_ENABLED=false`
-2. **Use secrets management**: HashiCorp Vault, AWS Secrets Manager, etc.
-3. **Enable HTTPS**: Use a reverse proxy (nginx, Traefik)
-4. **Restrict CORS**: Update `FRONTEND_URL` to your production domain
-5. **Add authentication**: Implement JWT or OAuth2
+## Production Security Considerations
+
+ConflictGuard implements several production-ready resilience patterns. This section documents security measures and recommendations for production deployment.
+
+### Implemented Security Features
+
+#### Rate Limiting (Resilience4j)
+
+All GraphQL mutations are protected by rate limiters to prevent API cost explosions and DoS attacks:
+
+| Operation | Limit | Rationale |
+|-----------|-------|-----------|
+| `ingestDocument` | 10/minute | AI entity extraction is expensive |
+| `analyzeConflicts` | 5/minute | AI reasoning is the most expensive operation |
+| `deleteDocument` | 30/minute | Cheap operation, higher limit |
+
+When rate limits are exceeded, the API returns a GraphQL error with retry information:
+
+```json
+{
+  "errors": [{
+    "message": "Rate limit exceeded for conflict analysis",
+    "extensions": {
+      "code": "RATE_LIMITED",
+      "operation": "analyzeConflicts",
+      "retryAfterSeconds": 60
+    }
+  }]
+}
+```
+
+#### Circuit Breaker (Resilience4j)
+
+The OpenRouter AI integration is protected by a circuit breaker to prevent cascade failures:
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `failureRateThreshold` | 50% | Open circuit after 50% failures |
+| `waitDurationInOpenState` | 30s | Wait before attempting recovery |
+| `slidingWindowSize` | 10 | Number of calls to track |
+| `slowCallDurationThreshold` | 60s | Calls slower than this count as slow |
+
+**Circuit States:**
+- **CLOSED**: Normal operation, all calls go through
+- **OPEN**: Service detected as failing, returns fallback immediately
+- **HALF-OPEN**: Testing if service recovered (3 test calls)
+
+```json
+{
+  "errors": [{
+    "message": "AI service temporarily unavailable",
+    "extensions": {
+      "code": "SERVICE_UNAVAILABLE",
+      "service": "openrouter",
+      "retryAfterSeconds": 30
+    }
+  }]
+}
+```
+
+#### Automatic Retry with Exponential Backoff
+
+Transient failures trigger automatic retries:
+- **Max Attempts**: 3
+- **Backoff**: 2s → 4s → 8s (exponential)
+
+### Security Checklist for Production
+
+| Item | Status | Action Required |
+|------|--------|-----------------|
+| **Secrets Management** | ⚠️ | Use HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault |
+| **Authentication** | ⚠️ | Implement JWT/OAuth2 via Spring Security |
+| **Authorization** | ⚠️ | Add role-based access control (RBAC) |
+| **GraphiQL UI** | ✅ Config | Set `GRAPHIQL_ENABLED=false` |
+| **CORS Origins** | ✅ Config | Update `FRONTEND_URL` to production domain |
+| **HTTPS** | ⚠️ | Deploy behind nginx/Traefik with TLS termination |
+| **Rate Limiting** | ✅ Implemented | Resilience4j rate limiters active |
+| **Circuit Breaker** | ✅ Implemented | OpenRouter protected |
+| **Input Validation** | ✅ Implemented | Size limits enforced |
+| **Cypher Injection** | ✅ Safe | Parameterized queries only |
+
+### Recommended Production Configuration
+
+```bash
+# Production environment variables
+export GRAPHIQL_ENABLED=false
+export LOG_LEVEL=WARN
+export HEALTH_DETAILS=never
+export FRONTEND_URL=https://your-domain.com
+
+# Use external secrets manager for these:
+# OPENROUTER_API_KEY (from Vault/Secrets Manager)
+# NEO4J_PASSWORD (from Vault/Secrets Manager)
+```
+
+### Future Security Enhancements
+
+1. **JWT Authentication**: Add Spring Security with OAuth2 Resource Server
+2. **API Key Management**: Implement API keys for programmatic access
+3. **Audit Logging**: Log all mutations with user identity
+4. **Cost Monitoring**: Track OpenRouter API usage per user
+5. **Redis Rate Limiting**: For distributed deployments, migrate to Redis-based rate limiting
 
 ---
 

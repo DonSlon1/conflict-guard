@@ -2,6 +2,9 @@ package com.conflictguard.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
@@ -51,12 +54,22 @@ public class OpenRouterClient {
     /**
      * Sends a chat completion request to OpenRouter API.
      *
+     * <p>Protected by:
+     * <ul>
+     *   <li><b>Circuit Breaker</b>: Opens after 50% failure rate, waits 30s before retry</li>
+     *   <li><b>Retry</b>: 3 attempts with exponential backoff (2s, 4s, 8s)</li>
+     * </ul>
+     *
      * @param systemPrompt The system prompt defining AI behavior
      * @param userPrompt   The user prompt with actual content
      * @return The AI response content as a string
-     * @throws OpenRouterException if the API call fails
+     * @throws OpenRouterException if the API call fails after all retries
+     * @throws CircuitBreakerOpenException if circuit breaker is open (service unavailable)
      */
+    @CircuitBreaker(name = "openrouter", fallbackMethod = "chatFallback")
+    @Retry(name = "openrouter")
     public String chat(String systemPrompt, String userPrompt) {
+        log.debug("Calling OpenRouter API (circuit breaker: openrouter)");
         HttpHeaders headers = buildHeaders();
         Map<String, Object> body = buildRequestBody(systemPrompt, userPrompt);
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
@@ -72,6 +85,31 @@ public class OpenRouterClient {
         } catch (RestClientException e) {
             log.error("OpenRouter API call failed: {}", e.getMessage());
             throw new OpenRouterException("Failed to communicate with OpenRouter API", e);
+        }
+    }
+
+    /**
+     * Fallback method when circuit breaker is open or all retries exhausted.
+     * Provides graceful degradation instead of cascading failures.
+     */
+    @SuppressWarnings("unused") // Called by Resilience4j via reflection
+    private String chatFallback(String systemPrompt, String userPrompt, Throwable t) {
+        if (t instanceof CallNotPermittedException) {
+            log.warn("Circuit breaker OPEN for OpenRouter API - service temporarily unavailable");
+            throw new CircuitBreakerOpenException(
+                    "AI service temporarily unavailable. Please try again in 30 seconds.", t);
+        }
+        log.error("OpenRouter API call failed after retries: {}", t.getMessage());
+        throw new OpenRouterException("AI service unavailable after multiple attempts: " + t.getMessage(), t);
+    }
+
+    /**
+     * Exception thrown when circuit breaker is open.
+     * Allows callers to distinguish between API errors and circuit breaker state.
+     */
+    public static class CircuitBreakerOpenException extends RuntimeException {
+        public CircuitBreakerOpenException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 

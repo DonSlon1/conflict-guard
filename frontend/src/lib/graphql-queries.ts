@@ -56,7 +56,7 @@ export const GET_CONFLICTS = gql`
 `;
 
 export const ANALYZE_CONFLICTS = gql`
-  query AnalyzeConflicts($documentIds: [ID!]!) {
+  mutation AnalyzeConflicts($documentIds: [ID!]!) {
     analyzeConflicts(documentIds: $documentIds) {
       summary
       analyzedAt

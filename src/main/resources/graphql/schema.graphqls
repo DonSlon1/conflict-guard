@@ -87,6 +87,7 @@ type Mutation {
     ingestDocument(input: DocumentInput!): Document!
     deleteDocument(id: ID!): Boolean!
     analyzeConflicts(documentIds: [ID!]!): ConflictAnalysisResult!
+    deleteConflict(id: ID!): Boolean!
 }
 
 input DocumentInput {

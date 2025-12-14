@@ -1,10 +1,15 @@
 package com.conflictguard.graphql;
 
+import com.conflictguard.ai.OpenRouterClient;
 import com.conflictguard.domain.Document;
 import com.conflictguard.domain.DocumentType;
+import com.conflictguard.graphql.exception.GraphQLRateLimitException;
+import com.conflictguard.graphql.exception.GraphQLServiceUnavailableException;
 import com.conflictguard.graphql.exception.GraphQLValidationException;
 import com.conflictguard.service.ConflictService;
 import com.conflictguard.service.DocumentService;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.graphql.data.method.annotation.Argument;
@@ -16,39 +21,18 @@ import java.util.List;
 /**
  * GraphQL Mutation controller for write operations.
  *
- * <p><b>PRODUCTION TODO - Rate Limiting:</b>
- * <pre>
- * In production, implement rate limiting to prevent:
- * 1. AI API cost explosions from runaway requests
- * 2. DoS attacks on expensive operations
+ * <p><b>Rate Limiting:</b> All mutations are protected by Resilience4j rate limiters:
+ * <ul>
+ *   <li>{@code ingestDocument}: 10 requests/minute (AI extraction is expensive)</li>
+ *   <li>{@code analyzeConflicts}: 5 requests/minute (reasoning is very expensive)</li>
+ *   <li>{@code deleteDocument}: 30 requests/minute (cheap operation)</li>
+ * </ul>
  *
- * Recommended implementation options:
+ * <p><b>Circuit Breaker:</b> AI operations are protected by circuit breaker.
+ * When OpenRouter API fails repeatedly, the circuit opens and returns a
+ * SERVICE_UNAVAILABLE error instead of overwhelming the failing service.
  *
- * Option A: Bucket4j with Spring Boot Starter
- * {@code
- * @RateLimiter(name = "aiOperations", fallbackMethod = "rateLimitFallback")
- * public Document ingestDocument(...) { ... }
- * }
- *
- * Option B: Custom interceptor with Redis (for distributed systems)
- * {@code
- * @Bean
- * public WebGraphQlInterceptor rateLimitInterceptor(RedisTemplate<String, String> redis) {
- *     return (request, chain) -> {
- *         String clientId = extractClientId(request);
- *         if (!rateLimiter.tryAcquire(clientId)) {
- *             throw new RateLimitExceededException("Too many requests");
- *         }
- *         return chain.next(request);
- *     };
- * }
- * }
- *
- * Suggested limits:
- * - ingestDocument: 10 requests/minute per client (AI extraction is expensive)
- * - analyzeConflicts: 5 requests/minute per client (reasoning is very expensive)
- * - deleteDocument: 30 requests/minute per client (cheap operation)
- * </pre>
+ * @see com.conflictguard.ai.OpenRouterClient
  */
 @Controller
 @Slf4j
@@ -58,19 +42,38 @@ public class MutationController {
     private static final int MAX_DOCUMENT_NAME_LENGTH = 255;
     private static final int MAX_DOCUMENT_CONTENT_LENGTH = 100_000; // ~100KB of text
     private static final int MAX_DOCUMENTS_FOR_ANALYSIS = 10;
+    private static final int RATE_LIMIT_RETRY_SECONDS = 60;
 
     private final DocumentService documentService;
     private final ConflictService conflictService;
 
-    // TODO: [PRODUCTION] Add @RateLimiter annotation here - see class Javadoc for implementation
+    /**
+     * Ingests a document, extracts entities using AI, and stores in graph database.
+     * Rate limited to 10 requests/minute to prevent AI API cost explosions.
+     */
     @MutationMapping
+    @RateLimiter(name = "documentIngestion", fallbackMethod = "ingestDocumentFallback")
     public Document ingestDocument(@Argument DocumentInput input) {
         validateDocumentInput(input);
         log.info("Mutation: ingestDocument(name={}, type={})", input.name(), input.documentType());
-        return documentService.ingestDocument(
-                input.name(),
-                input.content(),
-                input.documentType());
+        try {
+            return documentService.ingestDocument(
+                    input.name(),
+                    input.content(),
+                    input.documentType());
+        } catch (OpenRouterClient.CircuitBreakerOpenException e) {
+            throw new GraphQLServiceUnavailableException(
+                    "AI extraction service temporarily unavailable. Please try again later.",
+                    "openrouter", 30);
+        }
+    }
+
+    @SuppressWarnings("unused") // Called by Resilience4j via reflection
+    private Document ingestDocumentFallback(DocumentInput input, RequestNotPermitted e) {
+        log.warn("Rate limit exceeded for ingestDocument: {}", input.name());
+        throw new GraphQLRateLimitException(
+                "Rate limit exceeded for document ingestion. Maximum 10 documents per minute.",
+                "ingestDocument", RATE_LIMIT_RETRY_SECONDS);
     }
 
     private void validateDocumentInput(DocumentInput input) {
@@ -95,22 +98,68 @@ public class MutationController {
         }
     }
 
+    /**
+     * Deletes a document and its associated entities.
+     * Rate limited to 30 requests/minute (cheap operation).
+     */
     @MutationMapping
+    @RateLimiter(name = "documentDeletion", fallbackMethod = "deleteDocumentFallback")
     public boolean deleteDocument(@Argument String id) {
         log.info("Mutation: deleteDocument(id={})", id);
         return documentService.deleteDocument(id);
     }
 
-    // TODO: [PRODUCTION] Add @RateLimiter annotation here - most expensive operation
+
+    @SuppressWarnings("unused")
+    private boolean deleteDocumentFallback(String id, RequestNotPermitted e) {
+        log.warn("Rate limit exceeded for deleteDocument: {}", id);
+        throw new GraphQLRateLimitException(
+                "Rate limit exceeded for document deletion. Maximum 30 deletions per minute.",
+                "deleteDocument", RATE_LIMIT_RETRY_SECONDS);
+    }
+
     @MutationMapping
+    @RateLimiter(name = "conflictDeletion", fallbackMethod = "deleteConflictFallback")
+    public boolean deleteConflict(@Argument String id) {
+        log.info("Mutation: deleteConflict(id={})", id);
+        return conflictService.deleteConflict(id);
+    }
+    @SuppressWarnings("unused")
+    private boolean deleteConflictFallback(String id, RequestNotPermitted e) {
+        log.warn("Rate limit exceeded for deleteConflict: {}", id);
+        throw new GraphQLRateLimitException(
+                "Rate limit exceeded for conflict deletion. Maximum 30 deletions per minute.",
+                "deleteConflict", RATE_LIMIT_RETRY_SECONDS);
+    }
+    /**
+     * Analyzes documents for conflicts using AI reasoning.
+     * Rate limited to 5 requests/minute (most expensive operation).
+     */
+    @MutationMapping
+    @RateLimiter(name = "conflictAnalysis", fallbackMethod = "analyzeConflictsFallback")
     public QueryController.ConflictAnalysisResultDto analyzeConflicts(@Argument List<String> documentIds) {
         validateDocumentIds(documentIds);
         log.info("Mutation: analyzeConflicts(documentIds={})", documentIds);
-        ConflictService.ConflictAnalysisResult result = conflictService.analyzeConflicts(documentIds);
-        return new QueryController.ConflictAnalysisResultDto(
-                result.conflicts(),
-                result.summary(),
-                result.analyzedAt().toString());
+        try {
+            ConflictService.ConflictAnalysisResult result = conflictService.analyzeConflicts(documentIds);
+            return new QueryController.ConflictAnalysisResultDto(
+                    result.conflicts(),
+                    result.summary(),
+                    result.analyzedAt().toString());
+        } catch (OpenRouterClient.CircuitBreakerOpenException e) {
+            throw new GraphQLServiceUnavailableException(
+                    "AI reasoning service temporarily unavailable. Please try again later.",
+                    "openrouter", 30);
+        }
+    }
+
+    @SuppressWarnings("unused")
+    private QueryController.ConflictAnalysisResultDto analyzeConflictsFallback(
+            List<String> documentIds, RequestNotPermitted e) {
+        log.warn("Rate limit exceeded for analyzeConflicts: {} documents", documentIds.size());
+        throw new GraphQLRateLimitException(
+                "Rate limit exceeded for conflict analysis. Maximum 5 analyses per minute.",
+                "analyzeConflicts", RATE_LIMIT_RETRY_SECONDS);
     }
 
     private void validateDocumentIds(List<String> documentIds) {

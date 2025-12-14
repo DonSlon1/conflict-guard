@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useLazyQuery } from "@apollo/client";
+import { useMutation } from "@apollo/client";
 import { ANALYZE_CONFLICTS } from "@/lib/graphql-queries";
 
 interface Document {
@@ -25,7 +25,7 @@ export default function AnalysisPanel({
 }: AnalysisPanelProps) {
   const [analysisResult, setAnalysisResult] = useState<any>(null);
 
-  const [analyzeConflicts, { loading }] = useLazyQuery(ANALYZE_CONFLICTS, {
+  const [analyzeConflicts, { loading }] = useMutation(ANALYZE_CONFLICTS, {
     onCompleted: (data) => {
       setAnalysisResult(data.analyzeConflicts);
       onAnalysisComplete();

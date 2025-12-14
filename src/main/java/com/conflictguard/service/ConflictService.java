@@ -108,6 +108,20 @@ public class ConflictService {
                 LocalDateTime.now());
     }
 
+
+    /**
+     * Deletes a conflict and its associated entities.
+     */
+    @Transactional
+    public boolean deleteConflict(String id) {
+        if (conflictRepository.existsById(id)) {
+            conflictRepository.deleteById(id);
+            log.info("Deleted conflict: {}", id);
+            return true;
+        }
+        return false;
+    }
+
     /**
      * Checks if a conflict with similar entities and description already exists.
      * Prevents duplicate conflicts from being created on repeated analysis runs.

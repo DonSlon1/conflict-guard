@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery, useLazyQuery } from "@apollo/client";
+import { useMutation, useQuery } from "@apollo/client";
 import {
   GET_DOCUMENTS,
   GET_CONFLICTS,
@@ -17,7 +17,7 @@ export default function Home() {
   const { data: documentsData, loading: docsLoading, refetch: refetchDocs } = useQuery(GET_DOCUMENTS);
   const { data: conflictsData, refetch: refetchConflicts } = useQuery(GET_CONFLICTS);
 
-  const [analyzeConflicts, { loading: analyzing }] = useLazyQuery(ANALYZE_CONFLICTS, {
+  const [analyzeConflicts, { loading: analyzing }] = useMutation(ANALYZE_CONFLICTS, {
     onCompleted: () => {
       refetchConflicts();
     },
