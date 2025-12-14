@@ -599,6 +599,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Author
 
-Built for the LegalTech Hackathon 2024.
-
 *ConflictGuard demonstrates how Graph-based AI reasoning can solve real-world legal document analysis challenges.*
